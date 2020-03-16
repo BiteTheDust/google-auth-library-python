@@ -13,12 +13,14 @@
 # limitations under the License.
 import base64
 import datetime
+import os
 
 import mock
 import pytest
 import responses
 
 from google.auth import _helpers
+from google.auth import crypt
 from google.auth import exceptions
 from google.auth import jwt
 from google.auth import transport
@@ -469,3 +471,46 @@ class TestIDTokenCredentials(object):
 
         # The JWT token signature is 'signature' encoded in base 64:
         assert signature == b"signature"
+
+
+class TestIDTokenCredentialsFromMetadataServer(object):
+    def create_sample_id_token(self):
+        data_dir = os.path.join(os.path.dirname(__file__), "../data")
+        with open(os.path.join(data_dir, "privatekey.pem"), "rb") as fh:
+            private_key_bytes = fh.read()
+        signer = crypt.RSASigner.from_string(private_key_bytes, "1")
+
+        payload = {
+            "iss": "issuer",
+            "sub": "subject",
+            "iat": 1584393348,
+            "exp": 1584393400,
+            "aud": "audience",
+        }
+        header = {"typ": "JWT", "alg": "RS256"}
+        return jwt.encode(signer, payload, header)
+
+    @mock.patch("google.auth.compute_engine._metadata.get", autospec=True)
+    def test_success(self, get):
+        id_token = self.create_sample_id_token()
+        get.return_value = id_token
+        cred = credentials.IDTokenCredentialsFromMetadataServer("audience")
+        cred.refresh(request=mock.Mock())
+        assert cred.token == id_token
+        assert cred.expiry == 1584393400
+
+    @mock.patch("google.auth.compute_engine._metadata.get", autospec=True)
+    def test_invalid_token(self, get):
+        get.return_value = "invalid_id_token"
+        cred = credentials.IDTokenCredentialsFromMetadataServer("audience")
+        with pytest.raises(ValueError) as excinfo:
+            cred.refresh(request=mock.Mock())
+        assert excinfo.match(r"Wrong number of segments")
+
+    @mock.patch("google.auth.compute_engine._metadata.get", autospec=True)
+    def test_transport_error(self, get):
+        get.side_effect = exceptions.TransportError("transport error")
+        cred = credentials.IDTokenCredentialsFromMetadataServer("audience")
+        with pytest.raises(exceptions.RefreshError) as excinfo:
+            cred.refresh(request=mock.Mock())
+        assert excinfo.match(r"transport error")

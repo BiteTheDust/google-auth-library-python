@@ -254,3 +254,51 @@ class IDTokenCredentials(credentials.Credentials, credentials.Signing):
     @property
     def signer_email(self):
         return self._service_account_email
+
+
+class IDTokenCredentialsFromMetadataServer(credentials.Credentials):
+    """Identity token credentials associated with the instance.
+
+    These credentials use the Google Compute Engine metadata server to obtain
+    identity token associated with the instance. For more information, see the
+    `Compute Engine verifying instance identity documentation`_.
+
+    .. _Compute Engine verifying instance identity documentation:
+        https://cloud.google.com/compute/docs/instances/verifying-instance-identity
+    """
+
+    def __init__(self, audience):
+        """
+        Args:
+            audience (str): The intended audience for these credentials,
+                used when requesting the ID Token. The ID Token's ``aud`` claim
+                will be set to this string.
+        """
+        super(IDTokenCredentialsFromMetadataServer, self).__init__()
+        self._audience = audience
+
+    def refresh(self, request):
+        """Refresh the ID token.
+
+        Args:
+            request (google.auth.transport.Request): The object used to make
+                HTTP requests.
+
+        Raises:
+            google.auth.exceptions.RefreshError: If the Compute Engine metadata
+                service can't be reached or if the instance has no credentials.
+            ValueError: If extracting expiry from the obtained ID token fails.
+        """
+        try:
+            self.token = _metadata.get(
+                request,
+                "instance/service-accounts/default/identity?audience={}".format(
+                    self._audience
+                ),
+            )
+        except exceptions.TransportError as caught_exc:
+            new_exc = exceptions.RefreshError(caught_exc)
+            six.raise_from(new_exc, caught_exc)
+
+        _, payload, _, _ = jwt._unverified_decode(self.token)
+        self.expiry = payload["exp"]

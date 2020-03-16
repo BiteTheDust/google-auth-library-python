@@ -18,6 +18,7 @@ import google.auth
 from google.auth import compute_engine
 from google.auth import _helpers
 from google.auth import exceptions
+from google.auth import jwt
 from google.auth.compute_engine import _metadata
 
 
@@ -48,3 +49,12 @@ def test_default(verify_refresh):
     assert project_id is not None
     assert isinstance(credentials, compute_engine.Credentials)
     verify_refresh(credentials)
+
+
+def test_id_token_from_metadata_server(http_request):
+    credentials = compute_engine.IDTokenCredentialsFromMetadataServer("target_audience")
+    credentials.refresh(http_request)
+
+    _, payload, _, _ = jwt._unverified_decode(credentials.token)
+    assert payload["aud"] == "target_audience"
+    assert payload["exp"] == credentials.expiry
